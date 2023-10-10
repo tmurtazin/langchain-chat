@@ -5,6 +5,7 @@ import re
 import logging
 from abc import ABC, abstractmethod
 from typing import List
+import tiktoken
 import requests
 import mimetypes
 from bs4 import BeautifulSoup
@@ -19,6 +20,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.document_loaders import (
     PyPDFLoader,
     CSVLoader,
+    TextLoader,
     UnstructuredWordDocumentLoader,
     WebBaseLoader as BaseWebBaseLoader,
 )
@@ -34,12 +36,14 @@ import time
 load_dotenv()
 logger = logging.getLogger(__name__)
 OPENAI_API_KEY = os.getenv('OPEN_AI_KEY')
-# WEBSITE_URL = os.getenv('WEBSITE_URLS')
-# WEBSITE_URLS = WEBSITE_URL.split(",")
+WEBSITE_URL = os.getenv('WEBSITE_URLS')
+WEBSITE_URLS = WEBSITE_URL.split(",")
+BATCH_SIZE = 100  # Depending on your average document size, adjust this accordingly
+RATE_LIMIT_TOKENS = 950000  # Setting it a bit lower than 1 million for safety
 
-embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
-chat = ChatOpenAI(temperature=0, openai_api_key=OPENAI_API_KEY)
-
+embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY, max_retries=3)
+chat = ChatOpenAI(temperature=0, openai_api_key=OPENAI_API_KEY, model_name='gpt-4')
+#gpt-3.5-turbo-16k
 
 class WebBaseLoader(BaseWebBaseLoader):
 
@@ -48,7 +52,7 @@ class WebBaseLoader(BaseWebBaseLoader):
     ) -> str:
         for i in range(retries):
             try:
-                webdriver_service = Service('C:/WebDrivers/chromedriver.exe')  # Update this path
+                webdriver_service = Service('/Users/timur/symfony/guestbook/vendor/symfony/panther/chromedriver-bin/chromedriver_mac64')  # Update this path
                 options = webdriver.ChromeOptions()
                 options.add_argument('headless')
                 driver = webdriver.Chrome(service=webdriver_service, options=options)
@@ -84,6 +88,9 @@ class FAISS(BaseFAISS):
     def save(self, file_path):
         with open(file_path, "wb") as f:
             pickle.dump(self, f)
+
+    def addEmb(self, pages, embeddings):
+        self.__add(pages, embeddings)
 
     @staticmethod
     def load(file_path):
@@ -154,6 +161,8 @@ def get_loader(file_path_or_url):
             return PyPDFLoader(file_path_or_url)
         elif mime_type == 'text/csv':
             return CSVLoader(file_path_or_url)
+        elif mime_type == 'text/plain':
+            return TextLoader(file_path_or_url)
         elif mime_type in ['application/msword',
                            'application/vnd.openxmlformats-officedocument.wordprocessingml.document']:
             return UnstructuredWordDocumentLoader(file_path_or_url)
@@ -166,13 +175,18 @@ def train_or_load_model(train, faiss_obj_path, file_path, index_name):
         phrase = "Machine Translated by Google"
         loader = get_loader(file_path)
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=5000,
-                                                       chunk_overlap=400)
+                                                       chunk_overlap=400,
+                                                       separators=[".Статья "]
+                                                       )
+#        text_splitter = CharacterTextSplitter(separator=".Статья ")
         pages = loader.load_and_split(text_splitter=text_splitter)
+        fixed_pages = []
         for i in pages:
             print("\n ______________")
             i.page_content = remove_phrase(i.page_content, phrase)  # remove if the data translate from google
             # i.page_content = structured_chunk(i.page_content)
             print(i.page_content)
+            fixed_pages.append(i.page_content)
 
         # Save pages to a text file
         with open('output.txt', 'w', encoding='utf-8') as f:
@@ -181,18 +195,53 @@ def train_or_load_model(train, faiss_obj_path, file_path, index_name):
 
             sys.stdout = sys.__stdout__  # Reset standard output
 
-        if os.path.exists(faiss_obj_path):
-            faiss_index = FAISS.load(faiss_obj_path)
-            new_embeddings = faiss_index.from_documents(pages, embeddings)
-            new_embeddings.save(faiss_obj_path)
-        else:
-            faiss_index = FAISS.from_documents(pages, embeddings)
-            faiss_index.save(faiss_obj_path)
+        #if os.path.exists(faiss_obj_path):
+        #    faiss_index = FAISS.load(faiss_obj_path)
+        #    new_embeddings = faiss_index.from_documents(pages, embeddings)
+        #    new_embeddings.save(faiss_obj_path)
+        #else:
+        all_embeddings = embed_in_batches(fixed_pages, embeddings, BATCH_SIZE)
+        faiss_index = FAISS.from_texts(["Гражданский кодекс Российской Федерации"], embeddings)
+        faiss_index.addEmb(fixed_pages, all_embeddings)
+        faiss_index.save(faiss_obj_path)
 
         return FAISS.load(faiss_obj_path)
     else:
         return FAISS.load(faiss_obj_path)
 
+
+def num_tokens_from_string(string: str) -> int:
+    """Returns the number of tokens in a text string."""
+    encoding = tiktoken.get_encoding('cl100k_base')
+    num_tokens = len(encoding.encode(string))
+    return num_tokens
+
+
+def count_tokens_with_tiktoken(texts):
+    sum = 0
+    for text in texts:
+        sum = sum + num_tokens_from_string(text)
+    return sum
+
+
+def embed_in_batches(pages, embeddings, batch_size):
+    total_pages = len(pages)
+    all_embeddings = []
+
+    for start_idx in range(0, total_pages, batch_size):
+        end_idx = min(start_idx + batch_size, total_pages)
+        batch_pages = pages[start_idx:end_idx]
+
+        if count_tokens_with_tiktoken(batch_pages) > RATE_LIMIT_TOKENS:
+            raise ValueError("Individual batch exceeds rate limit!")
+
+        batch_embeddings = embeddings.embed_documents(batch_pages)  # Assuming 'embed' is the function to get embeddings
+        all_embeddings.extend(batch_embeddings)
+
+        # Sleep if needed to avoid hitting the rate limit, especially if you're close to the limit.
+        time.sleep(1)  # sleep for 1 second between batches
+
+    return all_embeddings
 
 def structured_chunk(message):
     messages = [SystemMessage(
@@ -207,10 +256,14 @@ def structured_chunk(message):
 def answer_questions(faiss_index):
     messages = [
         SystemMessage(
-            content='I want you to act as a document that I am having a conversation with. Your name is "AI '
-                    'Assistant". You will provide me with answers from the given info. If the answer is not included, '
-                    'say exactly "Hmm, I am not sure." and stop after that. Refuse to answer any question not about '
-                    'the info. Never break character.')
+            content='Your name is "AI Помошник по гражданскому кодексу РФ". '
+                    'You will provide me with answers from the given info. '
+                    #'If the answer is not included, say exactly "Хмм, я не уверен." and stop after that. '
+                    'Refuse to answer any question not about the info. '
+                    'When writing your answer, use only the portion of the found text that relates to the question. '
+                    'Never break character.')
+            #content='Use the below article on the "Гражданский кодекс Российской федерации" to answer the subsequent question. If the answer cannot be found, write "Хмм, я не уверен."')
+
     ]
 
     while True:
@@ -218,7 +271,7 @@ def answer_questions(faiss_index):
         if question.lower() == "stop":
             break
 
-        docs = faiss_index.similarity_search(query=question, k=2)
+        docs = faiss_index.similarity_search(query=question, k=1)
         print(docs)
 
         main_content = question + "\n\n"
@@ -235,14 +288,13 @@ def answer_questions(faiss_index):
 
 
 def main():
-    faiss_obj_path = "models/ycla.pickle"
-    file_path = "data/ycla_en.pdf"
-    index_name = "ycla"
+    faiss_obj_path = "models/citizen_article_big.pickle"
+    file_path = WEBSITE_URL
+    index_name = "trud"
 
     train = int(input("Do you want to train the model? (1 for yes, 0 for no): "))
     faiss_index = train_or_load_model(train, faiss_obj_path, file_path, index_name)
     answer_questions(faiss_index)
-
 
 if __name__ == "__main__":
     main()
