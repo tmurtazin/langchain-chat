@@ -174,9 +174,8 @@ def train_or_load_model(train, faiss_obj_path, file_path, index_name):
     if train:
         phrase = "Machine Translated by Google"
         loader = get_loader(file_path)
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=5000,
-                                                       chunk_overlap=400,
-                                                       separators=[".Статья "]
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=2500,
+                                                       chunk_overlap=200
                                                        )
 #        text_splitter = CharacterTextSplitter(separator=".Статья ")
         pages = loader.load_and_split(text_splitter=text_splitter)
@@ -201,7 +200,7 @@ def train_or_load_model(train, faiss_obj_path, file_path, index_name):
         #    new_embeddings.save(faiss_obj_path)
         #else:
         all_embeddings = embed_in_batches(fixed_pages, embeddings, BATCH_SIZE)
-        faiss_index = FAISS.from_texts(["Гражданский кодекс Российской Федерации"], embeddings)
+        faiss_index = FAISS.from_texts(["Платежный модуль для образовательной платформы GetCourse"], embeddings)
         faiss_index.addEmb(fixed_pages, all_embeddings)
         faiss_index.save(faiss_obj_path)
 
@@ -256,13 +255,14 @@ def structured_chunk(message):
 def answer_questions(faiss_index):
     messages = [
         SystemMessage(
-            content='Your name is "AI Помошник по гражданскому кодексу РФ". '
-                    'You will provide me with answers from the given info. '
-                    #'If the answer is not included, say exactly "Хмм, я не уверен." and stop after that. '
-                    'Refuse to answer any question not about the info. '
-                    'When writing your answer, use only the portion of the found text that relates to the question. '
-                    'Never break character.')
-            #content='Use the below article on the "Гражданский кодекс Российской федерации" to answer the subsequent question. If the answer cannot be found, write "Хмм, я не уверен."')
+            #content='Your name is "AI Помошник по платежному модулю GetCourse Pay". '
+            #        'You will provide me with answers from the given info. '
+            #        #'If the answer is not included, say exactly "Хмм, я не уверен." and stop after that. '
+            #        'Refuse to answer any question not about the info. '
+            #        'When writing your answer, use only the portion of the found text that relates to the question. '
+            #        'Never break character.')
+            #content='Use the below article on the "Документация по платежному модулю GetCourse Pay" to answer the subsequent question. If the answer cannot be found, write "Хмм, я не уверен."')
+            content='Your name is "AI помошник по документации платежного модуля GetCourse Pay для образовательной платформы GetCourse". You will provide me with answers from the given documentation. If the answer is not included, say exactly "Хмм, я не уверен. Пожалуйста переформулируйте ваш вопрос по модулю GetCourse Pay более конкретно или обратитесь в техподдержку https://getcourse.ru/tlgrm, email support@getcourse.ru", don\'t try to make up an answer. Keep the answer as concise as possible. Refuse to answer any question not about the documentation. Never break character.')
 
     ]
 
@@ -271,12 +271,14 @@ def answer_questions(faiss_index):
         if question.lower() == "stop":
             break
 
-        docs = faiss_index.similarity_search(query=question, k=1)
+        docs = faiss_index.similarity_search(query=question, k=3)
+        #docs = faiss_index.max_marginal_relevance_search(query=question, k=3, fetch_k=5)
         print(docs)
 
-        main_content = question + "\n\n"
+        main_content = "Begin of documentation\n\n"
         for doc in docs:
             main_content += doc.page_content + "\n\n"
+        main_content += "End of documentation\n\nQuestion: " + question
 
         messages.append(HumanMessage(content=main_content))
         ai_response = chat(messages).content
@@ -288,7 +290,7 @@ def answer_questions(faiss_index):
 
 
 def main():
-    faiss_obj_path = "models/citizen_article_big.pickle"
+    faiss_obj_path = "models/get_course_pay_txt.pickle"
     file_path = WEBSITE_URL
     index_name = "trud"
 
