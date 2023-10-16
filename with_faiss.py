@@ -38,6 +38,12 @@ logger = logging.getLogger(__name__)
 OPENAI_API_KEY = os.getenv('OPEN_AI_KEY')
 WEBSITE_URL = os.getenv('WEBSITE_URLS')
 WEBSITE_URLS = WEBSITE_URL.split(",")
+MODEL_NAME = os.getenv('MODEL_NAME')
+DOCUMENTATION_NAME = os.getenv('DOCUMENTATION_NAME')
+SYSTEM_PROMPT = os.getenv('SYSTEM_PROMPT')
+K_COUNT = int(os.getenv('K_COUNT'))
+CHUNK_SIZE = int(os.getenv('CHUNK_SIZE'))
+CHUNK_OVERLAP = int(os.getenv('CHUNK_OVERLAP'))
 BATCH_SIZE = 100  # Depending on your average document size, adjust this accordingly
 RATE_LIMIT_TOKENS = 950000  # Setting it a bit lower than 1 million for safety
 
@@ -173,12 +179,13 @@ def get_loader(file_path_or_url):
 def train_or_load_model(train, faiss_obj_path, file_paths, mode):
     if train:
         phrase = "Machine Translated by Google"
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=2500,
-                                                       chunk_overlap=200
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE,
+                                                       chunk_overlap=CHUNK_OVERLAP
                                                        )
 #        text_splitter = CharacterTextSplitter(separator=".Статья ")
         docs = []
         for file_path in file_paths:
+            file_path = file_path.strip(' \n')
             loader = get_loader(file_path)
             docs.extend(loader.load())
 
@@ -266,16 +273,7 @@ def structured_chunk(message):
 
 def answer_questions(faiss_index):
     messages = [
-        SystemMessage(
-            #content='Your name is "AI Помошник по платежному модулю GetCourse Pay". '
-            #        'You will provide me with answers from the given info. '
-            #        #'If the answer is not included, say exactly "Хмм, я не уверен." and stop after that. '
-            #        'Refuse to answer any question not about the info. '
-            #        'When writing your answer, use only the portion of the found text that relates to the question. '
-            #        'Never break character.')
-            #content='Use the below article on the "Документация по платежному модулю GetCourse Pay" to answer the subsequent question. If the answer cannot be found, write "Хмм, я не уверен."')
-            content='Your name is "AI помошник по документации платежного модуля GetCourse Pay для образовательной платформы GetCourse". You will provide me with answers from the given documentation. If the answer is not included, say exactly "Хмм, я не уверен. Пожалуйста переформулируйте ваш вопрос по модулю GetCourse Pay более конкретно или обратитесь в техподдержку https://getcourse.ru/tlgrm, email support@getcourse.ru", don\'t try to make up an answer. Keep the answer as concise as possible. Refuse to answer any question not about the documentation. Never break character.')
-
+        SystemMessage(content=SYSTEM_PROMPT)
     ]
 
     while True:
@@ -283,14 +281,14 @@ def answer_questions(faiss_index):
         if question.lower() == "stop":
             break
 
-        docs = faiss_index.similarity_search(query=question, k=3)
-        #docs = faiss_index.max_marginal_relevance_search(query=question, k=3, fetch_k=5)
+        docs = faiss_index.similarity_search(query=question, k=K_COUNT)
+        #docs = faiss_index.max_marginal_relevance_search(query=question, k=K_COUNT, fetch_k=(K_COUNT*2))
         print(docs)
 
-        main_content = "Begin of documentation\n\n"
+        main_content = "Begin of " + DOCUMENTATION_NAME + "\n\n"
         for doc in docs:
             main_content += doc.page_content + "\n\n"
-        main_content += "End of documentation\n\nQuestion: " + question
+        main_content += "End of " + DOCUMENTATION_NAME + "\n\nQuestion: " + question
 
         messages.append(HumanMessage(content=main_content))
         ai_response = chat(messages).content
@@ -302,7 +300,7 @@ def answer_questions(faiss_index):
 
 
 def main():
-    faiss_obj_path = "models/tatkina.pickle"
+    faiss_obj_path = "models/" + MODEL_NAME +".pickle"
     file_paths = WEBSITE_URLS
     mode = "meta"
 
