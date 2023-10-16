@@ -170,15 +170,20 @@ def get_loader(file_path_or_url):
             raise ValueError(f"Unsupported file type: {mime_type}")
 
 
-def train_or_load_model(train, faiss_obj_path, file_path, index_name):
+def train_or_load_model(train, faiss_obj_path, file_paths, mode):
     if train:
         phrase = "Machine Translated by Google"
-        loader = get_loader(file_path)
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=2500,
                                                        chunk_overlap=200
                                                        )
 #        text_splitter = CharacterTextSplitter(separator=".Статья ")
-        pages = loader.load_and_split(text_splitter=text_splitter)
+        docs = []
+        for file_path in file_paths:
+            loader = get_loader(file_path)
+            docs.extend(loader.load())
+
+        pages = text_splitter.split_documents(docs)
+
         fixed_pages = []
         for i in pages:
             print("\n ______________")
@@ -199,10 +204,17 @@ def train_or_load_model(train, faiss_obj_path, file_path, index_name):
         #    new_embeddings = faiss_index.from_documents(pages, embeddings)
         #    new_embeddings.save(faiss_obj_path)
         #else:
-        all_embeddings = embed_in_batches(fixed_pages, embeddings, BATCH_SIZE)
-        faiss_index = FAISS.from_texts(["Платежный модуль для образовательной платформы GetCourse"], embeddings)
-        faiss_index.addEmb(fixed_pages, all_embeddings)
-        faiss_index.save(faiss_obj_path)
+
+        if (mode=='batches'):
+            # embed_in_batches
+            all_embeddings = embed_in_batches(fixed_pages, embeddings, BATCH_SIZE)
+            faiss_index = FAISS.from_texts(["Платежный модуль для образовательной платформы GetCourse"], embeddings)
+            faiss_index.addEmb(fixed_pages, all_embeddings)
+            faiss_index.save(faiss_obj_path)
+            #end embed in batches
+        else:
+            faiss_index = FAISS.from_documents(pages, embeddings)
+            faiss_index.save(faiss_obj_path)
 
         return FAISS.load(faiss_obj_path)
     else:
@@ -290,12 +302,12 @@ def answer_questions(faiss_index):
 
 
 def main():
-    faiss_obj_path = "models/get_course_pay_txt.pickle"
-    file_path = WEBSITE_URL
-    index_name = "trud"
+    faiss_obj_path = "models/tatkina.pickle"
+    file_paths = WEBSITE_URLS
+    mode = "meta"
 
     train = int(input("Do you want to train the model? (1 for yes, 0 for no): "))
-    faiss_index = train_or_load_model(train, faiss_obj_path, file_path, index_name)
+    faiss_index = train_or_load_model(train, faiss_obj_path, file_paths, mode)
     answer_questions(faiss_index)
 
 if __name__ == "__main__":
