@@ -288,7 +288,7 @@ def answer_questions(faiss_index):
         if question.lower() == "stop":
             break
 
-        docs = faiss_index.similarity_search(query=question, k=50)
+        docs = faiss_index.similarity_search(query=question, k=K_COUNT)
         # docs = faiss_index.max_marginal_relevance_search(query=question, k=K_COUNT, fetch_k=(K_COUNT*50))
         #print(docs)
 
