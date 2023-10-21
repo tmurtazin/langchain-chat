@@ -26,7 +26,7 @@ from langchain.document_loaders import (
 )
 
 from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
+#from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -42,6 +42,9 @@ MODEL_NAME = os.getenv('MODEL_NAME')
 DOCUMENTATION_NAME = os.getenv('DOCUMENTATION_NAME')
 SYSTEM_PROMPT = os.getenv('SYSTEM_PROMPT')
 K_COUNT = int(os.getenv('K_COUNT'))
+COUNT_FROM_SAME_SOURCE = int(os.getenv('COUNT_FROM_SAME_SOURCE'))
+if COUNT_FROM_SAME_SOURCE == 0:
+    COUNT_FROM_SAME_SOURCE = K_COUNT
 CHUNK_SIZE = int(os.getenv('CHUNK_SIZE'))
 CHUNK_OVERLAP = int(os.getenv('CHUNK_OVERLAP'))
 BATCH_SIZE = 100  # Depending on your average document size, adjust this accordingly
@@ -49,7 +52,6 @@ RATE_LIMIT_TOKENS = 950000  # Setting it a bit lower than 1 million for safety
 
 embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY, max_retries=3)
 chat = ChatOpenAI(temperature=0, openai_api_key=OPENAI_API_KEY, model_name='gpt-4')
-#gpt-3.5-turbo-16k
 
 class WebBaseLoader(BaseWebBaseLoader):
 
@@ -58,7 +60,8 @@ class WebBaseLoader(BaseWebBaseLoader):
     ) -> str:
         for i in range(retries):
             try:
-                webdriver_service = Service('/Users/timur/symfony/guestbook/vendor/symfony/panther/chromedriver-bin/chromedriver_mac64')  # Update this path
+                webdriver_service = Service(
+                    '/Users/timur/symfony/guestbook/vendor/symfony/panther/chromedriver-bin/chromedriver_mac64')  # Update this path
                 options = webdriver.ChromeOptions()
                 options.add_argument('headless')
                 driver = webdriver.Chrome(service=webdriver_service, options=options)
@@ -182,7 +185,7 @@ def train_or_load_model(train, faiss_obj_path, file_paths, mode):
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE,
                                                        chunk_overlap=CHUNK_OVERLAP
                                                        )
-#        text_splitter = CharacterTextSplitter(separator=".Статья ")
+        #        text_splitter = CharacterTextSplitter(separator=".Статья ")
         docs = []
         for file_path in file_paths:
             file_path = file_path.strip(' \n')
@@ -206,19 +209,19 @@ def train_or_load_model(train, faiss_obj_path, file_paths, mode):
 
             sys.stdout = sys.__stdout__  # Reset standard output
 
-        #if os.path.exists(faiss_obj_path):
+        # if os.path.exists(faiss_obj_path):
         #    faiss_index = FAISS.load(faiss_obj_path)
         #    new_embeddings = faiss_index.from_documents(pages, embeddings)
         #    new_embeddings.save(faiss_obj_path)
-        #else:
+        # else:
 
-        if (mode=='batches'):
+        if (mode == 'batches'):
             # embed_in_batches
             all_embeddings = embed_in_batches(fixed_pages, embeddings, BATCH_SIZE)
             faiss_index = FAISS.from_texts(["Платежный модуль для образовательной платформы GetCourse"], embeddings)
             faiss_index.addEmb(fixed_pages, all_embeddings)
             faiss_index.save(faiss_obj_path)
-            #end embed in batches
+            # end embed in batches
         else:
             faiss_index = FAISS.from_documents(pages, embeddings)
             faiss_index.save(faiss_obj_path)
@@ -261,6 +264,7 @@ def embed_in_batches(pages, embeddings, batch_size):
 
     return all_embeddings
 
+
 def structured_chunk(message):
     messages = [SystemMessage(
         content="Please enhance and refine the following text to ensure clarity and standardization. Remove all "
@@ -281,14 +285,21 @@ def answer_questions(faiss_index):
         if question.lower() == "stop":
             break
 
-        docs = faiss_index.similarity_search(query=question, k=K_COUNT)
-        #docs = faiss_index.max_marginal_relevance_search(query=question, k=K_COUNT, fetch_k=(K_COUNT*2))
-        print(docs)
+        docs = faiss_index.similarity_search(query=question, k=50)
+        # docs = faiss_index.max_marginal_relevance_search(query=question, k=K_COUNT, fetch_k=(K_COUNT*50))
+        #print(docs)
 
+        source_counts = dict()
         main_content = "Begin of " + DOCUMENTATION_NAME + "\n\n"
         for doc in docs:
+            current_source = doc.metadata['source']
+            source_counts[current_source] = source_counts.get(current_source, 0) + 1
+            if source_counts[current_source] > COUNT_FROM_SAME_SOURCE:
+                continue
             main_content += doc.page_content + "\n\n"
+            print(doc)
         main_content += "End of " + DOCUMENTATION_NAME + "\n\nQuestion: " + question
+        print(source_counts)
 
         messages.append(HumanMessage(content=main_content))
         ai_response = chat(messages).content
@@ -300,13 +311,14 @@ def answer_questions(faiss_index):
 
 
 def main():
-    faiss_obj_path = "models/" + MODEL_NAME +".pickle"
+    faiss_obj_path = "models/" + MODEL_NAME + ".pickle"
     file_paths = WEBSITE_URLS
     mode = "meta"
 
     train = int(input("Do you want to train the model? (1 for yes, 0 for no): "))
     faiss_index = train_or_load_model(train, faiss_obj_path, file_paths, mode)
     answer_questions(faiss_index)
+
 
 if __name__ == "__main__":
     main()
