@@ -42,9 +42,12 @@ MODEL_NAME = os.getenv('MODEL_NAME')
 DOCUMENTATION_NAME = os.getenv('DOCUMENTATION_NAME')
 SYSTEM_PROMPT = os.getenv('SYSTEM_PROMPT')
 K_COUNT = int(os.getenv('K_COUNT'))
-COUNT_FROM_SAME_SOURCE = int(os.getenv('COUNT_FROM_SAME_SOURCE'))
-if COUNT_FROM_SAME_SOURCE == 0:
+COUNT_FROM_SAME_SOURCE = os.getenv('COUNT_FROM_SAME_SOURCE')
+if not COUNT_FROM_SAME_SOURCE:
     COUNT_FROM_SAME_SOURCE = K_COUNT
+else:
+    COUNT_FROM_SAME_SOURCE = int(COUNT_FROM_SAME_SOURCE)
+
 CHUNK_SIZE = int(os.getenv('CHUNK_SIZE'))
 CHUNK_OVERLAP = int(os.getenv('CHUNK_OVERLAP'))
 BATCH_SIZE = 100  # Depending on your average document size, adjust this accordingly
