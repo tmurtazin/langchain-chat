@@ -47,7 +47,9 @@ if not COUNT_FROM_SAME_SOURCE:
     COUNT_FROM_SAME_SOURCE = K_COUNT
 else:
     COUNT_FROM_SAME_SOURCE = int(COUNT_FROM_SAME_SOURCE)
-
+MODE = os.getenv('MODE')
+if not MODE:
+    MODE = 'simple'
 CHUNK_SIZE = int(os.getenv('CHUNK_SIZE'))
 CHUNK_OVERLAP = int(os.getenv('CHUNK_OVERLAP'))
 BATCH_SIZE = 100  # Depending on your average document size, adjust this accordingly
@@ -101,8 +103,8 @@ class FAISS(BaseFAISS):
         with open(file_path, "wb") as f:
             pickle.dump(self, f)
 
-    def addEmb(self, pages, embeddings):
-        self.__add(pages, embeddings)
+    def addEmb(self, pages, embeddings, metadatas):
+        self.__add(pages, embeddings, metadatas)
 
     @staticmethod
     def load(file_path):
@@ -182,7 +184,7 @@ def get_loader(file_path_or_url):
             raise ValueError(f"Unsupported file type: {mime_type}")
 
 
-def train_or_load_model(train, faiss_obj_path, file_paths, mode):
+def train_or_load_model(train, faiss_obj_path, file_paths):
     if train:
         phrase = "Machine Translated by Google"
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE,
@@ -198,12 +200,14 @@ def train_or_load_model(train, faiss_obj_path, file_paths, mode):
         pages = text_splitter.split_documents(docs)
 
         fixed_pages = []
+        metadatas = []
         for i in pages:
             print("\n ______________")
             i.page_content = remove_phrase(i.page_content, phrase)  # remove if the data translate from google
             # i.page_content = structured_chunk(i.page_content)
             print(i.page_content)
             fixed_pages.append(i.page_content)
+            metadatas.append(i.metadata)
 
         # Save pages to a text file
         with open('output.txt', 'w', encoding='utf-8') as f:
@@ -218,11 +222,11 @@ def train_or_load_model(train, faiss_obj_path, file_paths, mode):
         #    new_embeddings.save(faiss_obj_path)
         # else:
 
-        if (mode == 'batches'):
+        if MODE == 'batches':
             # embed_in_batches
             all_embeddings = embed_in_batches(fixed_pages, embeddings, BATCH_SIZE)
-            faiss_index = FAISS.from_texts(["Платежный модуль для образовательной платформы GetCourse"], embeddings)
-            faiss_index.addEmb(fixed_pages, all_embeddings)
+            faiss_index = FAISS.from_texts([SYSTEM_PROMPT], embeddings)
+            faiss_index.addEmb(fixed_pages, all_embeddings, metadatas)
             faiss_index.save(faiss_obj_path)
             # end embed in batches
         else:
@@ -316,12 +320,10 @@ def answer_questions(faiss_index):
 def main():
     faiss_obj_path = "models/" + MODEL_NAME + ".pickle"
     file_paths = WEBSITE_URLS
-    mode = "meta"
 
     train = int(input("Do you want to train the model? (1 for yes, 0 for no): "))
-    faiss_index = train_or_load_model(train, faiss_obj_path, file_paths, mode)
+    faiss_index = train_or_load_model(train, faiss_obj_path, file_paths)
     answer_questions(faiss_index)
-
 
 if __name__ == "__main__":
     main()
