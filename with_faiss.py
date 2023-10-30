@@ -47,6 +47,11 @@ if not COUNT_FROM_SAME_SOURCE:
     COUNT_FROM_SAME_SOURCE = K_COUNT
 else:
     COUNT_FROM_SAME_SOURCE = int(COUNT_FROM_SAME_SOURCE)
+ALL_COUNT = os.getenv('ALL_COUNT')
+if not ALL_COUNT:
+    ALL_COUNT = K_COUNT
+else:
+    ALL_COUNT = int(ALL_COUNT)
 MODE = os.getenv('MODE')
 if not MODE:
     MODE = 'simple'
@@ -297,12 +302,16 @@ def answer_questions(faiss_index):
         #print(docs)
 
         source_counts = dict()
+        all_count = 0
         main_content = "Begin of " + DOCUMENTATION_NAME + "\n\n"
         for doc in docs:
             current_source = doc.metadata['source']
             source_counts[current_source] = source_counts.get(current_source, 0) + 1
             if source_counts[current_source] > COUNT_FROM_SAME_SOURCE:
                 continue
+            if all_count > ALL_COUNT:
+                break
+            all_count = all_count + 1
             main_content += doc.page_content + "\n\n"
             print(doc)
         main_content += "End of " + DOCUMENTATION_NAME + "\n\nQuestion: " + question
